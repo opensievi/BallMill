@@ -1,0 +1,3 @@
+[submodule "PinChangeInt"]
+	path = PinChangeInt
+	url = https://github.com/GreyGnome/PinChangeInt.git
