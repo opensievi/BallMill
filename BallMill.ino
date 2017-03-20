@@ -16,7 +16,7 @@
 #include "PinChangeInt/PinChangeInt.h"
 
 // Software version and writing time
-#define SWVERSION "0.9"
+#define SWVERSION "1.0"
 #define SWDATE "03-17"
 
 // Behaviour
@@ -25,7 +25,7 @@
 
 // Pin layout
 #define RELAY_PIN 12
-#define MOSFET_PIN A7
+#define MOSFET_PIN A6
 
 #define STARTBTN_PIN 6
 #define STOPBTN_PIN 5
