@@ -25,14 +25,14 @@
 
 // Pin layout
 #define RELAY_PIN 12
-#define MOSFET_PIN A6
+#define MOSFET_PIN 9
 
 #define STARTBTN_PIN 6
 #define STOPBTN_PIN 5
 #define ROTARYBTN_PIN 4
 #define ROTARYFWD_PIN 2
 #define ROTARYRWD_PIN 3
-#define POT_PIN A3
+#define POT_PIN A6
 
 // LCD used
 #define LCD_WIDTH 16
@@ -284,6 +284,7 @@ void setup() {
 
 	// Output pins
 	pinMode(RELAY_PIN, OUTPUT);
+	pinMode(MOSFET_PIN, OUTPUT);
 
 	// Input pins
 	pinMode(STARTBTN_PIN, INPUT_PULLUP);
