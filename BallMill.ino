@@ -9,29 +9,28 @@
 // See README.md and LICENSE.txt for more info
 //
 
-#include <LiquidCrystal_I2C.h>
-#include <EEPROM.h>
 #include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
 #include "PinChangeInt/PinChangeInt.h"
 
 // Software version and writing time
-#define SWVERSION "1.0"
-#define SWDATE "03-17"
+#define SWVERSION "1.1"
+#define SWDATE "04-17"
 
 // Behaviour
-#define TIMERS 4 // Number of timers
+#define TIMERS 5 // Number of timers
 #define BUTTONS 4 // Number of buttons
 
 // Pin layout
 #define RELAY_PIN 12
 #define MOSFET_PIN 9
 
-#define STARTBTN_PIN 6
-#define STOPBTN_PIN 5
-#define ROTARYBTN_PIN 4
-#define ROTARYFWD_PIN 2
-#define ROTARYRWD_PIN 3
+#define STARTBTN_PIN 7
+#define STOPBTN_PIN 6
+#define ROTARYBTN_PIN 5
+#define ROTARYFWD_PIN 3
+#define ROTARYRWD_PIN 4
 #define POT_PIN A6
 
 // LCD used
@@ -43,6 +42,7 @@
 LiquidCrystal_I2C lcd(LCD_ADDRESS, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 
 int textState = 0;
+int textDelay = 5000;
 
 int cur_phase=0; // current working phase
 int cur_running=0; // Run status to track direction change and timer override
@@ -60,9 +60,10 @@ int timecalc; // Used to calculate spent time
 // Default values
 unsigned long changeDirection = 300000; // 300000ms = 5min
 // 100ms per accel. step * 127 = 12700ms = 12.7 seconds to full speed
-unsigned long accelerationDelay = 150; 
+unsigned long accelerationDelay = 100; 
 
 // Button handlers
+int prev_pot_position=0;
 int pot_position=0;
 int btn_queue[4];
 int rotary_count=0;
@@ -120,7 +121,7 @@ void countTimers() {
 		
 		if(i != 3) {
 			if(i == 0) {
-				if(cur_running > 0) {
+				if(cur_phase > 0) {
 					timers[i] -= diffMillis;
 				}
 			} else {
@@ -163,7 +164,7 @@ void changePhase() {
 
 		case 1: // Acceleration
 
-			sprintf(phasename,"RUN");
+			sprintf(phasename,"R %2d%%", int(((float)cur_acceleration/255)*100));
 			sprintf(phasetxt,"ACCEL");
 			//sprintf(phasetxt,"%d", cur_acceleration);
 
@@ -184,13 +185,25 @@ void changePhase() {
 			if(cur_acceleration >= upto) {
 				// Acceleration finished, move to
 				// stable running
-				timers[1] = changeDirection;
 				cur_phase = 2;
 			}
 
 			break;
 		case 2: // Running
 
+			int dst_spd;
+			dst_spd = int(((float)pot_position/100)*255);
+
+			if(cur_acceleration < dst_spd) {
+				cur_phase = 1;
+			} 
+
+			if(cur_acceleration > dst_spd) {
+				cur_phase = 3;
+				change_speed = 1;
+			}
+
+			sprintf(phasename,"RUN");
 			if(cur_rotation == 0) {
 				sprintf(phasetxt,">>>>");
 			} else {
@@ -222,10 +235,10 @@ void changePhase() {
 			int dest;
 			dest = 0;
 			if(change_speed) {
-				dest = int(((float)pot_position/100)*127);
+				dest = int(((float)pot_position/100)*255);
 			}
 
-			//sprintf(phasetxt,"%d", cur_acceleration);
+			sprintf(phasename,"R %2d%%", int(((float)cur_acceleration/255)*100));
 			sprintf(phasetxt,"DECEL");
 			if(timers[2] == 0) {
 				cur_acceleration--;
@@ -240,17 +253,20 @@ void changePhase() {
 			if(cur_acceleration <= dest) {
 				// Decelration finished
 				if(cur_running > 0) {
-					timers[1] = changeDirection;
 					change_speed = 0;
-					cur_phase = 1;
-					if(cur_rotation) {
-						digitalWrite(RELAY_PIN, LOW);
-					} else {
-						digitalWrite(RELAY_PIN, HIGH);
+					cur_phase = 2;
+					if(timers[1] == 0) {
+						timers[1] = changeDirection;
+						if(cur_rotation) {
+							digitalWrite(RELAY_PIN, LOW);
+						} else {
+							digitalWrite(RELAY_PIN, HIGH);
+						}
 					}
 				} else {
 					// If we stopped
 					digitalWrite(RELAY_PIN, HIGH);
+					digitalWrite(MOSFET_PIN, LOW);
 					cur_phase = 0;
 				}
 			}
@@ -332,54 +348,65 @@ void setup() {
 void loop() {
 	char buf[20];
 	char buf2[20];
-	// If your pot works wrong way change 100, 0 to 0, 100
-	// or, change + and - wires on the potentiomenter
-	int tmp_pot = map(analogRead(POT_PIN), 0, 1023, 100, 0); 
-	if(cur_phase != 0) {
-		if(tmp_pot > pot_position) {
-			change_speed = 1;
-			cur_phase = 1; // accelerate smoothly
+
+	//pot_position = map(analogRead(POT_PIN), 0, 1023, 100, 0);
+	//Serial.println(pot_position);
+			
+	// Add / subtract a 5 minutes from timer when rotary switch is turned
+	if(cur_phase == 0) {
+		if(rotary_count == 1) {
+			timers[0]+=300000;
+			rotary_count = 0;
 		} 
-		if(tmp_pot < pot_position) {
-			change_speed = 1;
-			cur_phase = 3; // decelerate smoothly
+
+		if(rotary_count == -1) {
+			timers[0]-=300000;
+			// Don't go below 0
+			if(timers[0] < 0) {
+				timers[0] = 0;
+			}
+			rotary_count = 0;
 		}
-	}
-	pot_position = tmp_pot;
+	} else {
+		if(rotary_count == 1) {
+			rotary_count = 0;
 
-
-	// Add / subtract a minute from timer when rotary switch is turned
-	if(rotary_count == 1) {
-		timers[0]+=300000;
-		//timers[0]+=60000;
-		rotary_count = 0;
-	} 
-
-	if(rotary_count == -1) {
-		timers[0]-=300000;
-		//timers[0]-=60000;
-		if(timers[0] < 0) {
-			timers[0] = 0;
+			if(cur_running > 0) {
+				pot_position++;
+				if(pot_position > 100) {
+					pot_position = 100;
+				}
+			}
 		}
-		rotary_count = 0;
+		if(rotary_count == -1) {
+			rotary_count = 0;
+			if(cur_running > 0) {
+				pot_position--;
+				if(pot_position < 0) {
+					pot_position = 0;
+				}
+			}
+		}
 	}
 
 	// If stop button is pressed
 	if(btn_queue[1] > 0) {
 		timers[0]=0;
 		btn_queue[1]=0;
-		if(cur_running > 0) {
-			cur_phase = 3;
-			cur_running = 0;
-		}
+		change_speed=0;
+		cur_phase = 3;
+		cur_running = 0;
+		pot_position = 0;
 	}
 
 	// If start button is pressed
 	if(btn_queue[0] > 0) {
 		btn_queue[0] = 0;
 		if(cur_phase == 0) {
+			timers[1] = changeDirection;
 			timers[2] = 0;
 			timers[3] = 0;
+			pot_position = 0;
 			cur_acceleration = 0;
 			if(timers[0] == 0) {
 				cur_running = 2;
@@ -396,10 +423,23 @@ void loop() {
 	int time_calc[2];
 	int tmp_time;
 
-	if(cur_running == 2) {
-		tmp_time = timers[3] / 1000;
+	if(timers[4] == 0) {
+		if(textState==0) {
+			textState=1;
+		} else {
+			textState=0;
+		}
+		timers[4]=textDelay;
+	}
+
+	if(textState==0 || cur_phase == 0) {
+		if(cur_running == 2) {
+			tmp_time = timers[3] / 1000;
+		} else {
+			tmp_time = timers[0] / 1000;
+		}
 	} else {
-		tmp_time = timers[0] / 1000;
+		tmp_time = timers[1] / 1000;
 	}
 
 	time_calc[0] = tmp_time / 60 /60;
@@ -408,10 +448,14 @@ void loop() {
 	tmp_time -= time_calc[1]*60;
 	time_calc[2] = tmp_time;
 
-	if(cur_running == 2) {
-		sprintf(buf2, "Run : %02dh%02dm%02ds", time_calc[0], time_calc[1], time_calc[2]);
+	if(textState == 0 || cur_phase == 0) {
+		if(cur_running == 2) {
+			sprintf(buf2, "Run : %02dh%02dm%02ds", time_calc[0], time_calc[1], time_calc[2]);
+		} else {
+			sprintf(buf2, "Time: %02dh%02dm%02ds", time_calc[0], time_calc[1], time_calc[2]);
+		}
 	} else {
-		sprintf(buf2, "Time: %02dh%02dm%02ds", time_calc[0], time_calc[1], time_calc[2]);
+		sprintf(buf2, "Turn: %02dh%02dm%02ds", time_calc[0], time_calc[1], time_calc[2]);
 	}
 
 	sprintf(buf, "%-5s %3d%% %5s", phasename, pot_position, phasetxt);
